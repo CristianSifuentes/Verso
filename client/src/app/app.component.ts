@@ -11,7 +11,7 @@ import { Router, ActivatedRoute, Params } from '@angular/router';
 })
 
 export class AppComponent implements OnInit {
-  public title = 'MUSIFY';
+  public title = 'VERSO';
   public user: User;
   public user_register: User;
   public identity;

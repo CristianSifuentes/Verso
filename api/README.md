@@ -1,6 +1,6 @@
-# Musify API
+# Verso API
 
-REST API for the Musify music player application. Built with Node.js, Express, and MongoDB (MEAN stack).
+REST API for the Verso music player application. Built with Node.js, Express, and MongoDB (MEAN stack).
 
 ## Tech Stack
 

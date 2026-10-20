@@ -1,6 +1,6 @@
-# Musify — Plan de migración al stack 2026
+# Verso — Plan de migración al stack 2026
 
-> **Documento vivo.** Es la referencia única para migrar Musify del stack MEAN de 2017 al stack actual.
+> **Documento vivo.** Es la referencia única para migrar Verso (antes *Musify*) del stack MEAN de 2017 al stack actual.
 > Marca cada casilla (`- [x]`) en el mismo commit que implementa el paso, y registra el avance en
 > la [bitácora](#15-bitácora-de-avance) al final.
 
@@ -9,6 +9,7 @@
 | Fecha de elaboración | 2026-10-20 |
 | Versiones verificadas contra | registro npm, `nodejs.org/dist/index.json`, notas de versión oficiales |
 | Alcance | `api/` (Node + Express + MongoDB) y `client/` (Angular) |
+| Nombre del proyecto | **Verso** (antes *Musify*, renombrado el 2026-10-20). Paquetes: `verso-api`, `verso-client` |
 | Estado global | 🔴 No iniciado |
 
 **Leyenda de estado** (úsala en la tabla de fases): 🔴 No iniciado · 🟡 En progreso · 🟢 Terminado · ⏸️ Bloqueado
@@ -37,7 +38,7 @@
 
 ## 1. Resumen ejecutivo
 
-Musify está construido sobre versiones de **2017** (Angular 4, Node 8, Mongoose 4, MongoDB ≤ 3.6). Ninguna
+Verso está construido sobre versiones de **2017** (Angular 4, Node 8, Mongoose 4, MongoDB ≤ 3.6). Ninguna
 recibe parches de seguridad y el proyecto **no se puede instalar** en un Node moderno: Angular CLI 1.1.3 no
 arranca en Node ≥ 10.
 
@@ -425,11 +426,11 @@ after(() => mongoose.disconnect());
 
 describe('Usuarios', () => {
   it('registra', () => request(app).post('/api/registarUsuario')
-    .send({ name: 'Test', surname: 'User', email: 'test@musify.dev', password: 'secret' })
+    .send({ name: 'Test', surname: 'User', email: 'test@verso.dev', password: 'secret' })
     .expect(200));
 
   it('login devuelve token con gethash', () => request(app).post('/api/loginUsuario')
-    .send({ email: 'test@musify.dev', password: 'secret', gethash: true })
+    .send({ email: 'test@verso.dev', password: 'secret', gethash: true })
     .expect(200)
     .then(res => { token = res.body.token; if (!token) throw new Error('sin token'); }));
 });
@@ -731,7 +732,7 @@ git checkout -b migration/f3-infra
 services:
   mongo:
     image: mongo:8.0
-    container_name: musify-mongo
+    container_name: verso-mongo
     ports:
       - "27017:27017"
     volumes:
@@ -755,10 +756,16 @@ volumes:
 ```bash
 mongorestore --uri="mongodb://localhost:27017" \
   --nsInclude='curso_mean2.*' \
+  --nsFrom='curso_mean2.*' --nsTo='verso.*' \
   ./backups/AAAA-MM-DD-pre-migration
 ```
 
-- [ ] Restore sin errores
+> **Renombrado de la base de datos:** el proyecto se llama **Verso**, pero la base sigue llamándose `curso_mean2`
+> (nombre heredado del curso original). El restore la renombra a **`verso`**. Desde aquí, todas las referencias
+> usan `mongodb://localhost:27017/verso`.
+
+- [ ] Restore sin errores, en la base **`verso`**
+- [ ] `MONGODB_URI` actualizado a `mongodb://localhost:27017/verso` en `api/.env`, `api/.env.example` y (si aún existe) `api/index.js`
 - [ ] Conteos por colección iguales a los de la Fase 0.2 (completar la tabla)
 - [ ] Índices revisados: `db.users.getIndexes()` (el índice único de email de la Fase 1.8 se crea al arrancar Mongoose; en producción se recomienda `autoIndex: false` y crear los índices con un script)
 - [ ] `db.adminCommand({ getParameter: 1, featureCompatibilityVersion: 1 })` devuelve `8.0`
@@ -1019,7 +1026,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 npm i express@5
 ```
 
-| Cambio en Express 5 | Qué hacer en Musify |
+| Cambio en Express 5 | Qué hacer en Verso |
 |---|---|
 | Parámetros opcionales: `/:page?` ya no es válido (path-to-regexp v8) | `/obtenerArtistas{/:page}` y `/obtenerCanciones{/:album}` |
 | Comodín `*` sin nombre ya no es válido | No se usa hoy. Si se agrega, `/*splat` |
@@ -1099,7 +1106,7 @@ import mongoose from 'mongoose';
 import { app } from '../src/app.js';
 
 before(async () => {
-  await mongoose.connect(process.env.MONGODB_URI);   // .env.test → curso_mean2_test
+  await mongoose.connect(process.env.MONGODB_URI);   // .env.test → verso_test
   await mongoose.connection.dropDatabase();
 });
 after(() => mongoose.disconnect());
@@ -1107,7 +1114,7 @@ after(() => mongoose.disconnect());
 describe('auth', () => {
   it('registra un usuario con ROLE_USER', async () => {
     const res = await request(app).post('/api/registarUsuario')
-      .send({ name: 'T', surname: 'U', email: 'T@Musify.dev', password: 'secret' });
+      .send({ name: 'T', surname: 'U', email: 'T@Verso.dev', password: 'secret' });
     assert.equal(res.status, 200);
   });
 });
@@ -1155,7 +1162,7 @@ nvm use 24
 ### 5.1 Crear el proyecto
 
 ```bash
-npx @angular/cli@22 new client-next --style=css --routing --ssr=false --skip-git
+npx @angular/cli@22 new verso --directory=client-next --style=css --routing --ssr=false --skip-git
 cd client-next
 echo "24" > .nvmrc
 ```
@@ -1165,7 +1172,7 @@ echo "24" > .nvmrc
 
 **Novedades por defecto en un proyecto Angular 22** (repasa las notas oficiales antes de empezar, ver Apéndice D):
 
-| Característica | Desde | Impacto en Musify |
+| Característica | Desde | Impacto en Verso |
 |---|---|---|
 | Componentes standalone (sin `NgModule`) | v19 (por defecto) | Se elimina `AppModule` |
 | Builder `application` (esbuild + Vite) | v17 | `ng serve` / `ng build` mucho más rápidos |
@@ -1193,7 +1200,7 @@ echo "24" > .nvmrc
 ```
 
 ```jsonc
-// angular.json → projects.client-next.architect.serve.options
+// angular.json → projects.verso.architect.serve.options
 "proxyConfig": "proxy.conf.json"
 ```
 
@@ -1628,7 +1635,7 @@ COPY . .
 RUN npx ng build
 
 FROM nginx:alpine
-COPY --from=build /app/dist/client/browser /usr/share/nginx/html
+COPY --from=build /app/dist/verso/browser /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf   # try_files $uri /index.html; + proxy /api → api:3979
 ```
 
@@ -1645,7 +1652,7 @@ services:
     build: ./api
     env_file: ./api/.env
     environment:
-      MONGODB_URI: mongodb://mongo:27017/curso_mean2
+      MONGODB_URI: mongodb://mongo:27017/verso
     volumes: [uploads:/app/uploads]
     depends_on:
       mongo: { condition: service_healthy }
@@ -1678,7 +1685,7 @@ jobs:
         ports: ["27017:27017"]
     defaults: { run: { working-directory: api } }
     env:
-      MONGODB_URI: mongodb://localhost:27017/curso_mean2_test
+      MONGODB_URI: mongodb://localhost:27017/verso_test
       JWT_SECRET: ci-secret
     steps:
       - uses: actions/checkout@v4
@@ -1786,9 +1793,9 @@ curl -s https://nodejs.org/dist/index.json | head -c 400
 
 # MongoDB
 docker compose up -d mongo
-mongosh "mongodb://localhost:27017/curso_mean2" --eval 'db.getCollectionNames()'
-mongodump  --uri="mongodb://localhost:27017" --db=curso_mean2 --out=./backups/$(date +%F)
-mongorestore --uri="mongodb://localhost:27017" --nsInclude='curso_mean2.*' ./backups/AAAA-MM-DD
+mongosh "mongodb://localhost:27017/verso" --eval 'db.getCollectionNames()'
+mongodump  --uri="mongodb://localhost:27017" --db=verso --out=./backups/$(date +%F)
+mongorestore --uri="mongodb://localhost:27017" --nsInclude='verso.*' ./backups/AAAA-MM-DD
 
 # API
 cd api && nvm use && npm run dev
@@ -1829,5 +1836,6 @@ cualquier versión distinta de las de este documento.
 
 | Fecha | Fase | Qué se hizo | Decisiones / desviaciones | Commit / PR |
 |---|---|---|---|---|
-| 2026-10-20 | — | Plan de migración creado | Objetivo: Node 24, Express 5, Mongoose 9, MongoDB 8.0, Angular 22 | |
+| 2026-10-20 | — | Plan de migración creado | Objetivo: Node 24, Express 5, Mongoose 9, MongoDB 8.0, Angular 22 | b6257f5 |
+| 2026-10-20 | — | Proyecto renombrado de Musify a **Verso** | La base `curso_mean2` se renombra a `verso` en la Fase 3 (no antes, para no perder los datos locales) | |
 | | | | | |
