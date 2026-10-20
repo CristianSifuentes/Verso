@@ -1,12 +1,12 @@
 <div align="center">
 
 ```
-███╗   ███╗██╗   ██╗███████╗██╗███████╗██╗   ██╗
-████╗ ████║██║   ██║██╔════╝██║██╔════╝╚██╗ ██╔╝
-██╔████╔██║██║   ██║███████╗██║█████╗   ╚████╔╝ 
-██║╚██╔╝██║██║   ██║╚════██║██║██╔══╝    ╚██╔╝  
-██║ ╚═╝ ██║╚██████╔╝███████║██║██║        ██║   
-╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝╚═╝        ╚═╝  
+██╗   ██╗███████╗██████╗ ███████╗ ██████╗ 
+██║   ██║██╔════╝██╔══██╗██╔════╝██╔═══██╗
+██║   ██║█████╗  ██████╔╝███████╗██║   ██║
+╚██╗ ██╔╝██╔══╝  ██╔══██╗╚════██║██║   ██║
+ ╚████╔╝ ███████╗██║  ██║███████║╚██████╔╝
+  ╚═══╝  ╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝ 
 ```
 
 ### *A full-stack music streaming platform — crafted with Angular & the MEAN stack*
@@ -52,13 +52,13 @@
 
 ## 1. Project Overview
 
-**Musify** is a full-stack music streaming application built on the **MEAN stack** — MongoDB, Express, Angular, and Node.js. It enables users to browse artists, explore album catalogs, and stream songs through an integrated HTML5 audio player, all within a dark-themed, responsive single-page application.
+**Verso** is a full-stack music streaming application built on the **MEAN stack** — MongoDB, Express, Angular, and Node.js. It enables users to browse artists, explore album catalogs, and stream songs through an integrated HTML5 audio player, all within a dark-themed, responsive single-page application.
 
 The platform implements a **two-tier role system** (`ROLE_ADMIN` / `ROLE_USER`), where administrators manage the entire music catalog while standard users enjoy a polished read-only streaming experience. Every interaction is secured by **JWT-based authentication** with a 30-day token lifetime.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  WHAT MUSIFY DELIVERS                                    │
+│  WHAT VERSO DELIVERS                                     │
 │                                                          │
 │  ♪  Stream music via embedded HTML5 audio player         │
 │  ♬  Browse artists, albums, and song catalogs            │
@@ -75,7 +75,7 @@ The platform implements a **two-tier role system** (`ROLE_ADMIN` / `ROLE_USER`),
 
 ```
 ╔══════════════════════════════════════════════════════════════════╗
-║                        MUSIFY ARCHITECTURE                       ║
+║                        VERSO ARCHITECTURE                        ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
 ║   ┌─────────────────────────────────────────────────────────┐    ║
@@ -161,7 +161,7 @@ The platform implements a **two-tier role system** (`ROLE_ADMIN` / `ROLE_USER`),
 ## 4. Repository Structure
 
 ```
-Musify-App/
+Verso/
 │
 ├── client/                          # Angular 4 SPA
 │   ├── .angular-cli.json            # Angular CLI config (prefix: app)
@@ -478,7 +478,7 @@ const appRoutes: Routes = [
 
 ## 10. State & Session Management
 
-Musify uses **browser localStorage** as its client-side state store — a pragmatic choice for an Angular 4 application without NgRx or a dedicated state library.
+Verso uses **browser localStorage** as its client-side state store — a pragmatic choice for an Angular 4 application without NgRx or a dedicated state library.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -740,7 +740,7 @@ exports.ensureAuth = (req, res, next) => {
 
 ## 15. File Upload System
 
-Musify handles four distinct binary asset types through a unified upload architecture built on `connect-multiparty` and native `XMLHttpRequest`.
+Verso handles four distinct binary asset types through a unified upload architecture built on `connect-multiparty` and native `XMLHttpRequest`.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -776,7 +776,7 @@ Static assets are served directly by Express via `res.sendFile(filePath)` at `GE
 
 ## 16. Styling System
 
-Musify uses a hand-crafted **dark theme** over Bootstrap 3, delivering a polished music-app aesthetic without a component library.
+Verso uses a hand-crafted **dark theme** over Bootstrap 3, delivering a polished music-app aesthetic without a component library.
 
 ### Color Palette
 
@@ -844,7 +844,7 @@ npm install -g @angular/cli@1.1.3
 
 ```bash
 git clone <repo-url>
-cd Musify-App
+cd Verso
 
 # Backend
 cd api && npm install

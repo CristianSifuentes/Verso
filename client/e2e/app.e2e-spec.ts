@@ -1,10 +1,10 @@
-import { ClientPage } from './app.po';
+import { VersoPage } from './app.po';
 
-describe('client App', () => {
-  let page: ClientPage;
+describe('verso-client App', () => {
+  let page: VersoPage;
 
   beforeEach(() => {
-    page = new ClientPage();
+    page = new VersoPage();
   });
 
   it('should display welcome message', () => {

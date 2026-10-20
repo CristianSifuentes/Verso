@@ -1,6 +1,6 @@
-# Musify Client
+# Verso Client
 
-Angular 4 single-page application for the Musify music player. Consumes the Musify REST API to manage artists, albums, songs, and user accounts.
+Angular 4 single-page application for the Verso music player. Consumes the Verso REST API to manage artists, albums, songs, and user accounts.
 
 ## Tech Stack
 
@@ -20,7 +20,7 @@ Angular 4 single-page application for the Musify music player. Consumes the Musi
 - **Node.js** 6.x or 8.x
 - **npm** 3.x – 5.x
 - **Angular CLI 1.1.3** — installed locally via `node_modules/.bin/ng` after `npm install`
-- The **Musify API** running on `http://localhost:3979` (see `api/README.md`)
+- The **Verso API** running on `http://localhost:3979` (see `api/README.md`)
 
 ## Installation
 
