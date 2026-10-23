@@ -2,13 +2,13 @@
 
 > **Documento vivo.** Es la referencia única para migrar Verso (antes *Musify*) del stack MEAN de 2017 al stack actual.
 > Marca cada casilla (`- [x]`) en el mismo commit que implementa el paso, y registra el avance en
-> la [bitácora](#15-bitácora-de-avance) al final.
+> la [bitácora](#16-bitácora-de-avance) al final.
 
 | Dato | Valor |
 |---|---|
 | Fecha de elaboración | 2026-10-20 |
 | Versiones verificadas contra | registro npm, `nodejs.org/dist/index.json`, notas de versión oficiales |
-| Alcance | `api/` (Node + Express + MongoDB) y `client/` (Angular) |
+| Alcance | `api/` (Node + Express + MongoDB), `client/` (Angular) y despliegue en Azure (Fase 7) |
 | Nombre del proyecto | **Verso** (antes *Musify*, renombrado el 2026-10-20). Paquetes: `verso-api`, `verso-client` |
 | Estado global | 🔴 No iniciado |
 
@@ -31,8 +31,9 @@
 11. [Fase 4 — API: Mongoose 9, Express 5 y librerías modernas](#fase-4--api-mongoose-9-express-5-y-librerías-modernas)
 12. [Fase 5 — Cliente: Angular 22 desde cero y port](#fase-5--cliente-angular-22-desde-cero-y-port)
 13. [Fase 6 — Calidad, DevOps y documentación](#fase-6--calidad-devops-y-documentación)
-14. [Apéndices](#14-apéndices) (equivalencias, riesgos, comandos, fuentes)
-15. [Bitácora de avance](#15-bitácora-de-avance)
+14. [Fase 7 — Despliegue en Azure](#fase-7--despliegue-en-azure)
+15. [Apéndices](#15-apéndices) (equivalencias, riesgos, comandos, fuentes)
+16. [Bitácora de avance](#16-bitácora-de-avance)
 
 ---
 
@@ -71,6 +72,7 @@ El tamaño del proyecto hace viable una migración completa:
 | 4 | Mongoose 9 + Express 5 + librerías | Medio | 1–2 días | 🔴 |
 | 5 | Cliente Angular 22 | Alto | 4–6 días | 🔴 |
 | 6 | Calidad, Docker, CI, documentación | Bajo | 1 día | 🔴 |
+| 7 | Despliegue en Azure (Container Apps, DocumentDB, Blob, Static Web Apps) | Medio | 2–3 días | 🔴 |
 
 ---
 
@@ -274,7 +276,7 @@ corrigen en la Fase 1, antes de migrar.
 1. Todas las casillas de la fase están marcadas.
 2. Las pruebas de humo pasan (`npm test` en `api/`).
 3. Probado a mano: registro, login, CRUD de artista/álbum/canción, subida de imagen y de audio, reproducción.
-4. Hay una entrada en la [bitácora](#15-bitácora-de-avance).
+4. Hay una entrada en la [bitácora](#16-bitácora-de-avance).
 5. La rama de la fase está integrada en `master`.
 
 ---
@@ -1728,11 +1730,536 @@ jobs:
 - [ ] `client/README.md`: requisitos, proxy, scripts, pruebas. Quitar las notas de Angular CLI 1.x
 - [ ] `.nvmrc` = `24` en `api/` y `client/` (o uno solo en la raíz)
 - [ ] `legacy-client/` eliminado
-- [ ] Este documento: tablero de fases en 🟢, estado global "Terminado" y entrada final en la bitácora
+- [ ] Este documento: fases 0–6 en 🟢 en el tablero y entrada en la bitácora (el estado global pasa a "Terminado" al cerrar la Fase 7)
 
 ---
 
-## 14. Apéndices
+## Fase 7 — Despliegue en Azure
+
+**Objetivo:** publicar Verso en Azure con servicios gestionados, sin operar servidores ni Kubernetes. La API
+queda **sin estado** (los archivos salen del disco del contenedor), así que puede tener varias réplicas.
+
+```bash
+git checkout -b migration/f7-azure
+```
+
+**Requisitos:** Fase 6 terminada (Docker, CI y `/health` funcionando), una suscripción de Azure y la CLI
+`az` con sesión iniciada (`az login`). Revisa las versiones vigentes de los paquetes `@azure/*` antes de
+instalarlos (regla R6).
+
+### 7.1 Arquitectura en Azure
+
+```
+                    ┌──────────────────────────────┐
+  Navegador ───────▶│ Static Web Apps (verso-web)  │  Angular 22 (archivos estáticos)
+      │             └──────────────────────────────┘
+      │  /api/*     ┌──────────────────────────────┐   Key Vault (JWT_SECRET, MONGODB_URI)
+      ├────────────▶│ Container Apps (verso-api)   │◀── identidad administrada (verso-api-id)
+      │             │ Node 24 + Express 5, 1–3 rép.│──▶ Azure DocumentDB (MongoDB 8.0)
+      │             └──────────────┬───────────────┘──▶ Application Insights
+      │   302 + SAS (lectura, 1 h) │
+      └────────────────────────────▼
+                    ┌──────────────────────────────┐
+                    │ Blob Storage (users, artists,│  imágenes y audio; streaming con Range
+                    │ album, song) — privado       │
+                    └──────────────────────────────┘
+```
+
+| Pieza local (Fase 6) | Servicio Azure | Por qué |
+|---|---|---|
+| contenedor `api` | **Azure Container Apps** | Ejecuta el `Dockerfile` existente. Escalado HTTP, revisiones y HTTPS incluidos, sin gestionar Kubernetes |
+| contenedor `mongo` | **Azure DocumentDB** (antes *Cosmos DB for MongoDB vCore*) | Compatible con el protocolo de MongoDB; Mongoose 9 funciona sin cambios. Alternativa: MongoDB Atlas en una región de Azure (ver 7.4) |
+| volumen `uploads` | **Blob Storage** | Archivos fuera del contenedor: la API puede tener varias réplicas y el audio se sirve con peticiones `Range` (adelantar la canción) |
+| contenedor `client` (nginx) | **Static Web Apps** | Un SPA estático no necesita cómputo; el plan Free incluye HTTPS y dominio propio |
+| `api/.env` | **Key Vault** + identidad administrada | Ningún secreto en variables sueltas ni en el repo |
+| logs de consola | **Application Insights** (OpenTelemetry) | Trazas de cada petición: Express → MongoDB → Blob |
+
+**Fuera de alcance** (no aportan nada con una sola API en una sola región): AKS, Service Bus, Event Hubs,
+Front Door multirregión. Se reconsideran si aparece trabajo en segundo plano (p. ej. transcodificar audio al
+subirlo: Blob → Event Grid → Azure Functions).
+
+### 7.2 Almacenamiento de archivos con drivers intercambiables
+
+El código decide dónde guardar según `STORAGE_DRIVER`: `local` (disco, como hasta la Fase 6) o `azure`
+(Blob Storage). En desarrollo, `azure` usa el emulador **Azurite**.
+
+```bash
+npm i @azure/storage-blob @azure/identity
+```
+
+```js
+// src/config/env.js (agregar)
+  STORAGE_DRIVER: process.env.STORAGE_DRIVER ?? 'local',              // 'local' | 'azure'
+  AZURE_STORAGE_ACCOUNT: process.env.AZURE_STORAGE_ACCOUNT,           // en Azure (identidad administrada)
+  AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING, // solo Azurite / local
+```
+
+```js
+// src/services/storage/index.js
+import { env } from '../../config/env.js';
+
+export const storage = env.STORAGE_DRIVER === 'azure'
+  ? await import('./azure-blob.js')
+  : await import('./local-disk.js');
+```
+
+```js
+// src/services/storage/local-disk.js — el comportamiento de las Fases 1.7 y 4.2
+import path from 'node:path';
+import { env } from '../../config/env.js';
+
+export async function save(folder, file) {
+  return file.filename;                       // multer.diskStorage ya lo escribió
+}
+
+export async function send(res, folder, name) {
+  res.sendFile(name, { root: path.resolve(env.UPLOADS_DIR, folder) }, (err) => {
+    if (err) res.status(404).send({ message: 'No existe el archivo' });
+  });
+}
+```
+
+```js
+// src/services/storage/azure-blob.js
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { DefaultAzureCredential } from '@azure/identity';
+import {
+  BlobServiceClient, BlobSASPermissions, StorageSharedKeyCredential, generateBlobSASQueryParameters,
+} from '@azure/storage-blob';
+import { env } from '../../config/env.js';
+
+const service = env.AZURE_STORAGE_CONNECTION_STRING
+  ? BlobServiceClient.fromConnectionString(env.AZURE_STORAGE_CONNECTION_STRING)   // Azurite
+  : new BlobServiceClient(`https://${env.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net`, new DefaultAzureCredential());
+
+const CONTENT_TYPES = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg',
+};
+const SAS_MINUTES = 60;
+let delegationKey;                            // vale hasta 7 días; se pide uno nuevo cada 6 h
+
+export async function save(folder, file) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const name = crypto.randomUUID() + ext;
+  await service.getContainerClient(folder).getBlockBlobClient(name).uploadData(file.buffer, {
+    blobHTTPHeaders: { blobContentType: CONTENT_TYPES[ext.slice(1)] ?? 'application/octet-stream' },
+  });
+  return name;
+}
+
+async function readUrl(blob, folder, name) {
+  const permissions = BlobSASPermissions.parse('r');
+  const expiresOn = new Date(Date.now() + SAS_MINUTES * 60_000);
+  if (service.credential instanceof StorageSharedKeyCredential) {
+    return blob.generateSasUrl({ permissions, expiresOn });           // Azurite / clave de cuenta
+  }
+  if (!delegationKey || new Date(delegationKey.signedExpiresOn) < expiresOn) {
+    delegationKey = await service.getUserDelegationKey(
+      new Date(Date.now() - 5 * 60_000), new Date(Date.now() + 6 * 3_600_000));
+  }
+  const sas = generateBlobSASQueryParameters(
+    { containerName: folder, blobName: name, permissions, expiresOn }, delegationKey, service.accountName);
+  return `${blob.url}?${sas}`;
+}
+
+export async function send(res, folder, name) {
+  if (name !== path.basename(name)) return res.status(404).send({ message: 'No existe el archivo' });
+  const blob = service.getContainerClient(folder).getBlobClient(name);
+  if (!(await blob.exists())) return res.status(404).send({ message: 'No existe el archivo' });
+  res.redirect(302, await readUrl(blob, folder, name));
+}
+```
+
+```js
+// src/middlewares/upload.js (cambio): en Azure el archivo se queda en memoria y lo sube el controlador
+const storage = env.STORAGE_DRIVER === 'azure'
+  ? multer.memoryStorage()
+  : multer.diskStorage({ /* igual que en 4.2 */ });
+```
+
+```js
+// controlador (ejemplo: artist.uploadImage / artist.getImageFile)
+import { storage } from '../services/storage/index.js';
+
+const image = await storage.save('artists', req.file);
+// … findByIdAndUpdate(id, { image }) como antes
+
+export const getImageFile = (req, res) => storage.send(res, 'artists', req.params.imageFile);
+```
+
+> **Contrato (R1):** las rutas `obtenerImagen*` y `obtenerFileCancion` pasan de responder **200 con el
+> archivo** a **302 hacia una URL firmada** de Blob Storage. `<img>` y `<audio>` siguen la redirección
+> solos, así que el cliente no cambia. Las pruebas de humo que comprueban el archivo deben seguir la
+> redirección (`supertest`: `.redirects(1)`). La URL firmada caduca en 1 h y solo permite lectura.
+
+```yaml
+# docker-compose.yml (agregar) — emulador de Blob Storage para desarrollo
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    command: azurite-blob --blobHost 0.0.0.0 --loose
+    ports: ["10000:10000"]
+```
+
+Para probar el driver `azure` en local, arranca Azurite con Compose y la API **en el host** (`npm run dev`) con
+`STORAGE_DRIVER=azure` y `AZURE_STORAGE_CONNECTION_STRING=UseDevelopmentStorage=true`. La redirección apunta a
+`http://127.0.0.1:10000/…`, que el navegador alcanza. Si la API corre dentro de Compose, la URL firmada apuntaría
+a `azurite:10000` y el navegador no podría resolverla.
+
+- [ ] `src/services/storage/{index,local-disk,azure-blob}.js`; los 4 controladores usan `storage.save` / `storage.send`
+- [ ] `multer.memoryStorage()` cuando `STORAGE_DRIVER=azure` (los límites de tamaño de 4.2 se mantienen)
+- [ ] Servicio `azurite` en `docker-compose.yml` y contenedores `users`, `artists`, `album`, `song` creados al arrancar (script o `createIfNotExists`)
+- [ ] Pruebas de humo en verde con `STORAGE_DRIVER=local` **y** con `STORAGE_DRIVER=azure` contra Azurite
+- [ ] Prueba: `GET /api/obtenerImagenArtista/..%2F..%2Fpackage.json` responde 404 con el driver `azure`
+- [ ] Adelantar una canción en el reproductor funciona (Blob responde `206 Partial Content`)
+- [ ] `.env.example` con `STORAGE_DRIVER`, `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_CONNECTION_STRING`
+
+### 7.3 Recursos base
+
+Variables usadas en el resto de la fase. Los nombres de ACR, Storage y Key Vault son **globales**: cámbialos
+si ya existen. Elige una región que tenga Container Apps, DocumentDB y Static Web Apps.
+
+```bash
+RG=rg-verso
+LOCATION=eastus2
+ACR=versoacr$RANDOM          # solo minúsculas y números
+ST=versost$RANDOM
+KV=verso-kv-$RANDOM
+ID=verso-api-id
+
+az group create -n $RG -l $LOCATION
+az acr create -g $RG -n $ACR --sku Basic
+az identity create -g $RG -n $ID
+ID_RES=$(az identity show -g $RG -n $ID --query id -o tsv)
+ID_CLIENT=$(az identity show -g $RG -n $ID --query clientId -o tsv)
+ID_PRINCIPAL=$(az identity show -g $RG -n $ID --query principalId -o tsv)
+
+# Storage: sin acceso público ni claves compartidas; solo Microsoft Entra ID
+az storage account create -g $RG -n $ST -l $LOCATION --sku Standard_ZRS --kind StorageV2 \
+  --allow-blob-public-access false --allow-shared-key-access false --min-tls-version TLS1_2
+ST_ID=$(az storage account show -g $RG -n $ST --query id -o tsv)
+
+# Key Vault con RBAC
+az keyvault create -g $RG -n $KV -l $LOCATION --enable-rbac-authorization true
+KV_ID=$(az keyvault show -n $KV --query id -o tsv)
+KV_URI=$(az keyvault show -n $KV --query properties.vaultUri -o tsv)
+
+# Permisos de la identidad de la API
+az role assignment create --assignee-object-id $ID_PRINCIPAL --assignee-principal-type ServicePrincipal \
+  --role AcrPull --scope $(az acr show -n $ACR --query id -o tsv)
+az role assignment create --assignee-object-id $ID_PRINCIPAL --assignee-principal-type ServicePrincipal \
+  --role "Storage Blob Data Contributor" --scope $ST_ID
+az role assignment create --assignee-object-id $ID_PRINCIPAL --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" --scope $KV_ID
+
+# Permisos para ti (subir archivos y escribir secretos)
+ME=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create --assignee $ME --role "Storage Blob Data Contributor" --scope $ST_ID
+az role assignment create --assignee $ME --role "Key Vault Secrets Officer" --scope $KV_ID
+
+for c in users artists album song; do
+  az storage container create --account-name $ST -n $c --auth-mode login
+done
+```
+
+> Las asignaciones de rol tardan unos minutos en aplicarse. Si un comando siguiente devuelve 403, espera y repite.
+
+- [ ] Grupo de recursos, ACR, identidad, Storage (4 contenedores privados) y Key Vault creados
+- [ ] Roles asignados a la identidad: `AcrPull`, `Storage Blob Data Contributor`, `Key Vault Secrets User`
+- [ ] Nombres reales anotados en la bitácora (ACR, Storage, Key Vault)
+
+### 7.4 Base de datos: Azure DocumentDB
+
+Crear el clúster desde el portal (**Azure DocumentDB**; en documentación anterior aparece como *Azure Cosmos DB
+for MongoDB (vCore)*). El nombre del comando de la CLI cambió con el renombrado: si prefieres la CLI,
+comprueba el vigente con `az find documentdb`.
+
+| Opción | Valor |
+|---|---|
+| Versión de MongoDB | **8.0** (la misma que en local; si no está disponible, la más alta que ofrezca) |
+| Nivel | *Free* para pruebas; el nivel de entrada de pago para uso real |
+| Alta disponibilidad | Desactivada al principio; activarla si hay usuarios reales |
+| Red | Acceso público con reglas de firewall: tu IP (para el restore) y *permitir servicios de Azure* (para Container Apps) |
+
+Copia la cadena de conexión **tal como la da el portal** (con todos sus parámetros, como `tls=true`; no quites
+ninguno) y sustituye usuario y contraseña.
+
+```bash
+# Cadena del portal, sin base de datos: para las herramientas de MongoDB
+DOCDB_URI='mongodb+srv://<usuario>:<contraseña>@<host>/?tls=true&…'
+# La misma cadena con /verso antes del "?": la que usa la API
+MONGODB_URI_AZURE='mongodb+srv://<usuario>:<contraseña>@<host>/verso?tls=true&…'
+
+# Desde la máquina con el MongoDB 8 local de la Fase 3
+mongodump --uri="mongodb://localhost:27017" --db=verso --out=./backups/$(date +%F)-pre-azure
+mongorestore --uri="$DOCDB_URI" --nsInclude='verso.*' ./backups/AAAA-MM-DD-pre-azure
+```
+
+```bash
+az keyvault secret set --vault-name $KV -n mongodb-uri --value "$MONGODB_URI_AZURE"
+az keyvault secret set --vault-name $KV -n jwt-secret  --value "$(openssl rand -base64 48)"
+```
+
+> **Alternativa — MongoDB Atlas en Azure:** si alguna consulta falla en DocumentDB (es compatible con el
+> protocolo, pero no es el mismo servidor), crea un clúster de Atlas en la misma región de Azure. El resto de la
+> fase no cambia: solo es otra `MONGODB_URI`. Anota la decisión en la bitácora.
+
+- [ ] Clúster creado; versión y nivel anotados en la bitácora
+- [ ] Restore sin errores y conteos por colección iguales a los de la Fase 3.2
+- [ ] Índices creados con el script de la Fase 3.2 (`autoIndex: false` en producción), incluido el único de `email`
+- [ ] Pruebas de humo de la API **local** contra DocumentDB en verde (`MONGODB_URI=$MONGODB_URI_AZURE npm test`)
+- [ ] Secretos `mongodb-uri` y `jwt-secret` en Key Vault. El `jwt-secret` es nuevo: todas las sesiones se cierran (esperado)
+- [ ] Regla de firewall de tu IP eliminada al terminar la migración de datos
+
+### 7.5 Archivos existentes a Blob Storage
+
+```bash
+for c in users artists album song; do
+  az storage blob upload-batch --account-name $ST --auth-mode login -d $c -s api/uploads/$c \
+    --pattern '[!.]*' --overwrite false      # '[!.]*' omite .gitkeep
+done
+```
+
+Los nombres de archivo no cambian, así que los campos `image` y `file` guardados en MongoDB siguen siendo
+válidos.
+
+- [ ] Conteo de blobs por contenedor = conteo de archivos en `api/uploads/*` (sin `.gitkeep`)
+- [ ] Una imagen y una canción antiguas se ven y suenan desde la app desplegada (7.6)
+
+### 7.6 API en Azure Container Apps
+
+```bash
+TAG=$(git rev-parse --short HEAD)
+az acr build -r $ACR -t verso-api:$TAG ./api
+
+az monitor log-analytics workspace create -g $RG -n verso-logs -l $LOCATION
+LOGS_ID=$(az monitor log-analytics workspace show -g $RG -n verso-logs --query customerId -o tsv)
+LOGS_KEY=$(az monitor log-analytics workspace get-shared-keys -g $RG -n verso-logs --query primarySharedKey -o tsv)
+az containerapp env create -g $RG -n verso-env -l $LOCATION \
+  --logs-workspace-id $LOGS_ID --logs-workspace-key $LOGS_KEY
+
+az containerapp create -g $RG -n verso-api --environment verso-env \
+  --image $ACR.azurecr.io/verso-api:$TAG \
+  --registry-server $ACR.azurecr.io --registry-identity $ID_RES \
+  --user-assigned $ID_RES \
+  --ingress external --target-port 3979 \
+  --min-replicas 1 --max-replicas 3 \
+  --cpu 0.5 --memory 1Gi \
+  --secrets "jwt-secret=keyvaultref:${KV_URI}secrets/jwt-secret,identityref:$ID_RES" \
+            "mongodb-uri=keyvaultref:${KV_URI}secrets/mongodb-uri,identityref:$ID_RES" \
+  --env-vars NODE_ENV=production JWT_SECRET=secretref:jwt-secret MONGODB_URI=secretref:mongodb-uri \
+             STORAGE_DRIVER=azure AZURE_STORAGE_ACCOUNT=$ST AZURE_CLIENT_ID=$ID_CLIENT \
+             CORS_ORIGIN=https://PENDIENTE   # se completa en 7.7
+
+API_URL=https://$(az containerapp show -g $RG -n verso-api --query properties.configuration.ingress.fqdn -o tsv)
+curl -s $API_URL/health
+```
+
+Sondas de salud (*liveness* y *readiness*) contra `/health`: configúralas en el portal (Container App →
+*Health probes*) o con un YAML (`az containerapp update --yaml`).
+
+> - `AZURE_CLIENT_ID` le indica a `DefaultAzureCredential` qué identidad administrada usar.
+> - `--min-replicas 1` evita el arranque en frío. Con `0` sale más barato, pero la primera petición tras un rato
+>   sin uso tarda varios segundos (arranque de Node + conexión a MongoDB).
+> - El `HEALTHCHECK` del `Dockerfile` lo ignora Container Apps; usa las sondas.
+
+- [ ] Imagen construida en ACR con el tag del commit
+- [ ] Container App en ejecución; `GET $API_URL/health` responde `{ "status": "ok" }`
+- [ ] Secretos referenciados desde Key Vault (ningún valor secreto en `--env-vars`)
+- [ ] Sondas de *liveness* y *readiness* contra `/health`
+- [ ] Pruebas de humo contra `$API_URL` en verde
+- [ ] Con 2 réplicas forzadas (`--min-replicas 2`): subir una imagen y verla funciona sin importar qué réplica atienda
+
+### 7.7 Cliente en Azure Static Web Apps
+
+```json
+// client/public/staticwebapp.config.json — fallback del SPA (equivale al try_files de nginx)
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/*.{css,js,ico,png,jpg,svg,webp,woff2}"]
+  }
+}
+```
+
+```ts
+// src/environments/environment.prod.ts
+export const environment = {
+  production: true,
+  apiUrl: 'https://verso-api.<id>.<región>.azurecontainerapps.io/api',   // $API_URL/api
+};
+```
+
+```bash
+az staticwebapp create -g $RG -n verso-web -l $LOCATION --sku Free
+WEB_URL=https://$(az staticwebapp show -g $RG -n verso-web --query defaultHostname -o tsv)
+
+# CORS de la API: solo el origen del cliente
+az containerapp update -g $RG -n verso-api --set-env-vars CORS_ORIGIN=$WEB_URL
+```
+
+El despliegue del cliente lo hace el workflow de 7.9. Para una primera prueba manual:
+
+```bash
+cd client && npx ng build
+npx @azure/static-web-apps-cli deploy dist/verso/browser \
+  --deployment-token "$(az staticwebapp secrets list -g $RG -n verso-web --query properties.apiKey -o tsv)" \
+  --env production
+```
+
+> **Mismo origen (opcional):** con el plan *Standard* de Static Web Apps se puede enlazar la Container App como
+> *backend* y llamar a `/api` sin CORS ni URL absoluta. Con el plan Free se usa la URL absoluta y CORS, como arriba.
+
+- [ ] `staticwebapp.config.json` en `client/public/` (llega a `dist/` con `ng build`)
+- [ ] `environment.prod.ts` apunta a `$API_URL/api`
+- [ ] `CORS_ORIGIN` de la API = URL de Static Web Apps (y el dominio propio, si lo hay)
+- [ ] Recargar el navegador en `/artistas/1` no da 404
+- [ ] Checklist manual de la Fase 0.4 completo contra la app desplegada
+
+### 7.8 Observabilidad con Application Insights
+
+```bash
+npm i @azure/monitor-opentelemetry
+```
+
+```js
+// src/telemetry.js — se carga antes que el resto para que la instrumentación funcione
+import { useAzureMonitor } from '@azure/monitor-opentelemetry';
+
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) useAzureMonitor();
+```
+
+```jsonc
+// api/package.json — y el CMD del Dockerfile: ["node", "--import", "./src/telemetry.js", "src/index.js"]
+"start": "node --import ./src/telemetry.js src/index.js"
+```
+
+```bash
+az monitor app-insights component create -g $RG -a verso-insights -l $LOCATION \
+  --workspace $(az monitor log-analytics workspace show -g $RG -n verso-logs --query id -o tsv)
+AI_CONN=$(az monitor app-insights component show -g $RG -a verso-insights --query connectionString -o tsv)
+az containerapp update -g $RG -n verso-api --set-env-vars APPLICATIONINSIGHTS_CONNECTION_STRING="$AI_CONN"
+
+# Tope diario de ingesta para no llevarse sorpresas en la factura
+az monitor log-analytics workspace update -g $RG -n verso-logs --quota 1
+```
+
+> **ES Modules:** la instrumentación automática de paquetes importados con `import` necesita registrar el *hook*
+> de módulos de OpenTelemetry. Sigue la sección de ESM del README de `@azure/monitor-opentelemetry` para la
+> versión que instales y comprueba el resultado en el *Application map* (regla R6).
+
+- [ ] `src/telemetry.js` cargado con `--import` en `start` y en el `Dockerfile`
+- [ ] En Application Insights → *Application map* aparecen la API, MongoDB y Blob Storage
+- [ ] Una petición lenta se puede seguir de punta a punta en *Transaction search*
+- [ ] Alerta por correo si la tasa de respuestas 5xx supera un umbral (p. ej. 5 % en 5 min)
+- [ ] Tope diario de ingesta configurado en Log Analytics
+
+### 7.9 Despliegue continuo (GitHub Actions con OIDC)
+
+Sin secretos de larga duración: GitHub se autentica en Azure con una credencial federada.
+
+```bash
+APP_ID=$(az ad app create --display-name verso-github --query appId -o tsv)
+az ad sp create --id $APP_ID
+az ad app federated-credential create --id $APP_ID --parameters '{
+  "name": "verso-master",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:CristianSifuentes/Verso:ref:refs/heads/master",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+az role assignment create --assignee $APP_ID --role Contributor --scope $(az group show -n $RG --query id -o tsv)
+```
+
+> El `subject` distingue mayúsculas: debe coincidir con `owner/repo` tal como aparece en GitHub.
+
+En GitHub → *Settings* → *Secrets and variables* → *Actions*, crear las **variables** `AZURE_CLIENT_ID`
+(`$APP_ID`), `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ACR`, `RG` y el **secreto**
+`SWA_DEPLOYMENT_TOKEN` (token de Static Web Apps de 7.7).
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  api:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.workflow_run.head_sha }}" }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: |
+          TAG=$(git rev-parse --short HEAD)
+          az acr build -r ${{ vars.ACR }} -t verso-api:$TAG ./api
+          az containerapp update -g ${{ vars.RG }} -n verso-api --image ${{ vars.ACR }}.azurecr.io/verso-api:$TAG
+  client:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.workflow_run.head_sha }}" }
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+          action: upload
+          app_location: client
+          output_location: dist/verso/browser
+```
+
+> Revisa las versiones mayores vigentes de las acciones al crear el workflow (como en 6.2). Los jobs hacen
+> checkout de `workflow_run.head_sha`, así que se despliega exactamente el commit que pasó CI.
+
+- [ ] App registrada con credencial federada para `master` y rol `Contributor` sobre `rg-verso` (no sobre la suscripción)
+- [ ] Variables y secreto creados en GitHub
+- [ ] Un push a `master` con CI en verde despliega API y cliente sin pasos manuales
+- [ ] Cada despliegue de la API crea una revisión nueva en Container Apps (`az containerapp revision list -g $RG -n verso-api -o table`)
+
+### 7.10 Costos y seguridad
+
+| Recurso | Plan inicial | Qué vigilar |
+|---|---|---|
+| Container Apps | Consumo, 1–3 réplicas | Tiene una cuota gratuita mensual; `--min-replicas 1` consume siempre una réplica |
+| DocumentDB | Free (pruebas) / nivel de entrada | El nivel Free tiene límites de almacenamiento y sin SLA |
+| Blob Storage | Standard ZRS | Almacenamiento + transferencia de salida del audio |
+| Static Web Apps | Free | Límite de ancho de banda del plan |
+| ACR | Basic | Borrar imágenes viejas (`az acr run --cmd "acr purge …"`) |
+| Log Analytics / App Insights | Pago por GB | La partida que más sorprende: tope diario (7.8) |
+
+Calcula el total en <https://azure.microsoft.com/pricing/calculator/> con tu región y anótalo en la bitácora.
+
+- [ ] Presupuesto con alerta en *Cost Management* (`rg-verso`, p. ej. al 80 % y 100 % del monto elegido)
+- [ ] Storage sin acceso público ni claves compartidas (`--allow-shared-key-access false` comprobado)
+- [ ] Ningún secreto en variables de entorno de la Container App ni en GitHub, salvo el token de SWA
+- [ ] Firewall de DocumentDB sin IPs personales
+- [ ] (Opcional) Dominio propio en Static Web Apps y en la Container App, con certificado gestionado
+
+**Criterio de aceptación:** la app desplegada pasa el checklist manual de la Fase 0.4 y las pruebas de humo
+contra `$API_URL`; un push a `master` despliega solo; Application Insights muestra las peticiones de punta a
+punta; y ningún secreto vive fuera de Key Vault (salvo el token de despliegue de SWA en GitHub).
+
+**Reversión:**
+- **API:** volver a desplegar la imagen anterior (cada imagen lleva el tag de su commit):
+  `az containerapp update -g $RG -n verso-api --image $ACR.azurecr.io/verso-api:<tag anterior>`. Las imágenes
+  disponibles se listan con `az acr repository show-tags -n $ACR --repository verso-api -o table`.
+- **Todo Azure:** el entorno local de la Fase 6 (`docker compose up`) no se tocó. Los datos y archivos en
+  Azure son copias; para eliminar todo: `az group delete -n $RG`. ⚠️ Antes, `mongodump` de DocumentDB y
+  `az storage blob download-batch` si hubo altas en Azure que quieras conservar.
+
+---
+
+## 15. Apéndices
 
 ### A. Tabla de equivalencias rápida
 
@@ -1767,6 +2294,10 @@ jobs:
 | Protractor | Playwright |
 | TSLint + codelyzer | angular-eslint |
 | `.angular-cli.json` | `angular.json` |
+| `api/uploads/` en disco + `sendFile` | Blob Storage + `302` a URL firmada (SAS) |
+| `api/.env` con secretos | Key Vault + identidad administrada |
+| `docker compose` en un servidor | Container Apps (API) + Static Web Apps (cliente) |
+| `console.log` | Application Insights (OpenTelemetry) |
 
 ### B. Riesgos y mitigaciones
 
@@ -1781,6 +2312,9 @@ jobs:
 | Cambia el contrato de la API sin querer | Media | Alto | Regla R1 + pruebas de humo desde la Fase 0 |
 | Versiones distintas de las de este plan al ejecutarlo | Alta | Bajo | Regla R6: comprobar con `npm view` y anotar en la bitácora |
 | Node 8 no instala en el equipo actual | Media | Bajo | Docker `node:8` (0.1) |
+| Una consulta de Mongoose no funciona en DocumentDB | Baja | Medio | Pruebas de humo contra DocumentDB antes de desplegar (7.4); alternativa MongoDB Atlas en Azure |
+| Factura de Azure inesperada | Media | Medio | Presupuesto con alertas y tope de ingesta de logs (7.8, 7.10) |
+| Archivos perdidos al pasar a Blob Storage | Baja | Alto | `upload-batch` sin sobrescribir + conteos (7.5); `api/uploads/` local se conserva |
 
 ### C. Comandos de referencia
 
@@ -1826,10 +2360,20 @@ grep -rn "@angular/http\|rxjs/add\|\*ngIf\|\*ngFor\|getElementById\|_body" clien
 - MongoDB — ciclo de vida: <https://www.mongodb.com/legal/support-policy/lifecycles>
 - Bootstrap 5 — migración: <https://getbootstrap.com/docs/5.3/migration/>
 - Bootstrap Icons: <https://icons.getbootstrap.com/>
+- Azure Container Apps: <https://learn.microsoft.com/azure/container-apps/>
+- Azure Container Apps — secretos desde Key Vault: <https://learn.microsoft.com/azure/container-apps/manage-secrets>
+- Azure DocumentDB: <https://learn.microsoft.com/azure/documentdb/>
+- Azure Blob Storage para JavaScript: <https://learn.microsoft.com/azure/storage/blobs/storage-quickstart-blobs-nodejs>
+- SAS de delegación de usuario: <https://learn.microsoft.com/azure/storage/blobs/storage-blob-user-delegation-sas-create-javascript>
+- Azurite: <https://learn.microsoft.com/azure/storage/common/storage-use-azurite>
+- Azure Static Web Apps — configuración: <https://learn.microsoft.com/azure/static-web-apps/configuration>
+- Azure Monitor OpenTelemetry para Node.js: <https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-enable?tabs=nodejs>
+- GitHub Actions con OIDC en Azure: <https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect>
+- Calculadora de precios de Azure: <https://azure.microsoft.com/pricing/calculator/>
 
 ---
 
-## 15. Bitácora de avance
+## 16. Bitácora de avance
 
 Agrega una fila al cerrar cada sesión de trabajo o fase. Anota aquí las decisiones (D14, 1.7, 5.10, …) y
 cualquier versión distinta de las de este documento.
@@ -1838,4 +2382,5 @@ cualquier versión distinta de las de este documento.
 |---|---|---|---|---|
 | 2026-10-20 | — | Plan de migración creado | Objetivo: Node 24, Express 5, Mongoose 9, MongoDB 8.0, Angular 22 | b6257f5 |
 | 2026-10-20 | — | Proyecto renombrado de Musify a **Verso** | La base `curso_mean2` se renombra a `verso` en la Fase 3 (no antes, para no perder los datos locales) | |
+| 2026-10-23 | — | Fase 7 (despliegue en Azure) agregada al plan | Container Apps + DocumentDB + Blob Storage + Static Web Apps + Key Vault + Application Insights. Archivos servidos con `302` a URL firmada (cambio de estado HTTP aceptado en R1) | |
 | | | | | |
